@@ -1,0 +1,121 @@
+---
+title: "How to use tidytext and wordcloud2"
+author: Jiayi Dong jd4123
+format:
+  html:
+    embed-resources: true
+execute: 
+  echo: true
+---
+
+# 1. Installing the package
+
+```{r}
+# install.packages("tidytext")
+# library(devtools)
+# install_github("lchiffon/wordcloud2")
+```
+
+# 2. Get text data
+
+```{r}
+library(gutenbergr)
+library(dplyr)
+Charles_Dickens_works <- gutenberg_works(author == "Dickens, Charles")
+suppressWarnings(
+Charles_Dickens_texts <- gutenberg_download(
+  gutenberg_id = Charles_Dickens_works$gutenberg_id,
+  meta_fields = c("title", "author")
+)
+)
+first_6_books <- Charles_Dickens_texts |>
+  group_by(title) |>
+  filter(title %in% (unique(Charles_Dickens_texts$title)[1:6])) |>
+  ungroup()
+head(first_6_books)
+```
+
+```{r}
+unique(first_6_books$title)
+```
+
+# 3. Clean text data
+
+Get only the text and book title, and add a column to check the line number. Now the data is in `one-row-per-line` format
+
+```{r}
+book_text <- first_6_books[, c("title", "text")] |>
+  group_by(title) |>
+  mutate(line = row_number()) |>
+  ungroup()
+  
+head(book_text)
+```
+
+But to work with a tidy dataset for text mining, we need to convert it into `one-token-per-row` format. The token here could be anything like words, characters, n-grams, sentences, etc,. `tidytext` provides a function called `unnest_tokens()`, which provides a way to convert a dataframe with a text column to be one-token-per-row.
+
+```{r}
+library(tidytext)
+tidy_books <- book_text |>
+  unnest_tokens(output = 'word', input = 'text', 
+                token = 'words', format = 'text') 
+head(tidy_books, 10)
+```
+
+It acts like `pivot_longer` where line is the names are words and the values are lines. But it will help automatically get rid of empty lines.\
+
+Now, we will try to get rid of the stop words, which are insignificant for our text analysis. Here we will use `get_stopwords()` to select all the stopwords. Then we will use `anti_join()` to get all the words that are not stopwords.
+
+```{r}
+tidy_books_clean <- tidy_books |>
+  anti_join(get_stopwords())
+head(tidy_books_clean, 10)
+```
+
+After we have the cleaned words, we can use `count()` function to find the most common words in all the books combined.
+
+```{r}
+tidy_books_clean |>
+  count(word, sort = TRUE) 
+```
+
+# 4. Sentiment Analysis
+
+There are four sentiment lexicons available in the function `get_sentiments()`, which are `afinn`, `bing`, `nrc`, or `loughran`. We will use `bing` here, which categorizes words in a binary fashion into positive and negative categories.
+
+```{r}
+get_sentiments("bing")
+```
+
+Check the sentiment section by section.
+
+```{r}
+library(tidyr)
+charlesdickenssentiment <- tidy_books_clean |>
+  inner_join(get_sentiments("bing"), by = "word", relationship = "many-to-many") |>
+  count(title, index = line %/% 100, sentiment) |>
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) |>
+  mutate(sentiment = positive - negative)
+charlesdickenssentiment
+```
+
+Plot the sentiment for each book.
+
+```{r, fig.width=10, fig.height=10}
+library(ggplot2)
+
+ggplot(charlesdickenssentiment, aes(index, sentiment, fill = title)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(vars(title), ncol = 2, scales = "free_x")
+```
+
+# 5. Visualization with Wordcloud2
+
+Not for serious data analysis and visualization!!!
+
+```{r}
+library(wordcloud2)
+word_count <- tidy_books_clean |>
+                count(word, sort = TRUE) 
+wordcloud2(data = word_count, minSize=8)
+```
